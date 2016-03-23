@@ -22,7 +22,7 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Start up the CBCentralManager
+        // 第一步: 設定 CBCentralManager 及 delegate
         centralManager = CBCentralManager(delegate: self, queue: nil)
     }
 
@@ -61,16 +61,19 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
     */
     func scan() {
 
-        centralManager?.scanForPeripheralsWithServices(
-            [transferServiceUUID], options: [
-                CBCentralManagerScanOptionAllowDuplicatesKey : NSNumber(bool: true)
-            ]
-        )
-        
+//        centralManager?.scanForPeripheralsWithServices(
+//            [transferServiceUUID], options: [
+//                CBCentralManagerScanOptionAllowDuplicatesKey : NSNumber(bool: true)
+//            ]
+//        )
+//        // 第二步: 掃描裝置(可指定或不指定特定裝置)
+        centralManager?.scanForPeripheralsWithServices(nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey:1])
+
         print("Scanning started")
     }
 
-    /** This callback comes whenever a peripheral that is advertising the TRANSFER_SERVICE_UUID is discovered.
+    /** 第三步: 發現裝置，進行連線
+    *  This callback comes whenever a peripheral that is advertising the TRANSFER_SERVICE_UUID is discovered.
     *  We check the RSSI, to make sure it's close enough that we're interested in it, and if it is,
     *  we start the connection process
     */
@@ -98,7 +101,9 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
             centralManager?.connectPeripheral(peripheral, options: nil)
         }
     }
-    
+  
+
+    // 處理連線失敗
     /** If the connection fails for whatever reason, we need to deal with it.
     */
     func centralManager(central: CBCentralManager, didFailToConnectPeripheral peripheral: CBPeripheral, error: NSError?) {
@@ -107,7 +112,8 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
         cleanup()
     }
 
-    /** We've connected to the peripheral, now we need to discover the services and characteristics to find the 'transfer' characteristic.
+    /** 第四步: 成功連線裝置
+    *  We've connected to the peripheral, now we need to discover the services and characteristics to find the 'transfer' characteristic.
     */
     func centralManager(central: CBCentralManager, didConnectPeripheral peripheral: CBPeripheral) {
         print("Peripheral Connected")
@@ -118,14 +124,21 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
         
         // Clear the data that we may already have
         data.length = 0
-        
+
+        // 第五步: 設定連線裝置 delegate
         // Make sure we get the discovery callbacks
         peripheral.delegate = self
-        
+
+        // 第六步: 掃描此連線裝置有哪些服務
         // Search only for services that match our UUID
         peripheral.discoverServices([transferServiceUUID])
+//        peripheral.discoverServices(nil)
+
+        // 讀取 RSSI 值
+        peripheral.readRSSI()
     }
-    
+
+    // 第七步: 成功發現服務(裝置可能會有多個服務)
     /** The Transfer Service was discovered
     */
     func peripheral(peripheral: CBPeripheral, didDiscoverServices error: NSError?) {
@@ -136,13 +149,16 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
         }
         
         // Discover the characteristic we want...
-        
+
+        // 第八步: 找出特定的服務
         // Loop through the newly filled peripheral.services array, just in case there's more than one.
         for service in peripheral.services as [CBService]! {
             peripheral.discoverCharacteristics([transferCharacteristicUUID], forService: service)
+//          peripheral.discoverCharacteristics(nil, forService: service)
         }
     }
-    
+
+    // 第九步: 訂閱此特定的服務
     /** The Transfer characteristic was discovered.
     *  Once this has been found, we want to subscribe to it, which lets the peripheral know we want the data it contains
     */
@@ -158,13 +174,15 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
         for characteristic in service.characteristics as [CBCharacteristic]! {
             // And check if it's the right one
             if characteristic.UUID.isEqual(transferCharacteristicUUID) {
+                // 第十步: 回應需要訂閱
                 // If it is, subscribe to it
                 peripheral.setNotifyValue(true, forCharacteristic: characteristic)
             }
         }
         // Once this is complete, we just need to wait for the data to come in.
     }
-    
+
+    // 第十一步: 處理訂閱後傳回來的資料
     /** This callback lets us know more data has arrived via notification on the characteristic
     */
     func peripheral(peripheral: CBPeripheral, didUpdateValueForCharacteristic characteristic: CBCharacteristic, error: NSError?) {
@@ -181,7 +199,7 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
                 
                 // Cancel our subscription to the characteristic
                 peripheral.setNotifyValue(false, forCharacteristic: characteristic)
-                
+
                 // and disconnect from the peripehral
                 centralManager?.cancelPeripheralConnection(peripheral)
             }
@@ -195,7 +213,8 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
             print("Invalid data")
         }
     }
-    
+
+    // 處理裝置訂閱狀態改變
     /** The peripheral letting us know whether our subscribe/unsubscribe happened or not
     */
     func peripheral(peripheral: CBPeripheral, didUpdateNotificationStateForCharacteristic characteristic: CBCharacteristic, error: NSError?) {
@@ -214,7 +233,12 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
             centralManager?.cancelPeripheralConnection(peripheral)
         }
     }
-    
+
+    func peripheral(peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: NSError?) {
+      print(">>> \(peripheral.name!) RSSI: \(RSSI)")
+    }
+
+    // 處理置裝斷線
     /** Once the disconnection happens, we need to clean up our local copy of the peripheral
     */
     func centralManager(central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: NSError?) {
@@ -224,7 +248,8 @@ class BTLECentralViewController: UIViewController, CBCentralManagerDelegate, CBP
         // We're disconnected, so start scanning again
         scan()
     }
-    
+
+    // 取消訂閱
     /** Call this when things either go wrong, or you're done with the connection.
     *  This cancels any subscriptions if there are any, or straight disconnects if not.
     *  (didUpdateNotificationStateForCharacteristic will cancel the connection if a subscription is involved)
